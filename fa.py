@@ -1,15 +1,24 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.widgets as mwidgets
+import matplotlib.backends.backend_tkagg as tkagg
 from scipy.fftpack import fft, fftfreq
 from scipy.interpolate import interp1d
 from astropy.timeseries import LombScargle
 import tkinter as tk
 from tkinter import filedialog, simpledialog, messagebox
 import io
+import pandas as pd
+import os
+
+### TO DO:
+# scaling the graphs
+# export as csv
 
 #Initialize a hidden tkinter root window so only the dialogs appear
 root = tk.Tk()
-root.withdraw()
+#root.withdraw()
+root.title("MINFLUX Fourier Transform")
 
 #asks user to select a .npy file
 filename = filedialog.askopenfilename(title="Select MINFLUX data file", filetypes=[("NumPy files", "*.npy"), ("All files", "*.*")])
@@ -36,7 +45,9 @@ common_frequency = np.linspace(0, 200, 1000)
 summed_power = np.zeros_like(common_frequency)
 
 #Plots Raw Signal -- asked ai to do this part
-plt.figure(figsize=(10, 4))
+fig, (g1, g2) = plt.subplots(2, 1, figsize=(10, 8))
+#plt.figure(figsize=(10, 4))
+raw_data_points = []
 for T in u_tid:
     mask = mfx_data['tid'] == T
     if np.size(mfx_data['tim'][mask]) > cutoff and \
@@ -45,31 +56,82 @@ for T in u_tid:
         t = mfx_data['tim'][mask][cutoff:] - mfx_data['tim'][mask][cutoff]
         locs = mfx_data['loc'][mask, :][cutoff:]
         y = locs[:, 0] - np.mean(locs[:, 0])
-        
+
+        for time_val, signal_val in zip(t, y):
+                raw_data_points.append([time_val, signal_val])
+
         if np.size(t) > 1:
-            plt.plot(t, y)
-            
-            #Lomb-Scargle Calculation
+            g1.plot(t, y)
             frequency, power = LombScargle(t, y).autopower()
-            power_interp = np.interp(common_frequency, frequency, power)
-            summed_power += power_interp
+            summed_power += np.interp(common_frequency, frequency, power)
 
 #plots graph 1
-plt.xlabel(labels[0])#used to be time
-plt.ylabel(labels[1]) #used to be signal
-plt.title(f"Raw Signal Overlaid: {labels[0]}")
-plt.grid(True)
+g1.set_xlabel(labels[0])#used to be time
+g1.set_ylabel(labels[1]) #used to be signal
+g1.set_title(f"Raw Signal Overlaid: {labels[0]}")
+g1.grid(True)
 #plt.show() #opens the firstwindow
 
 #plots graph 2
-plt.figure(figsize=(10, 5))
-plt.plot(common_frequency, summed_power, label="Summed Power Spectrum", color='purple')
-plt.xlabel(labels[0])
-plt.ylabel(labels[1])
-plt.ylim([0, 0.25])
-
+#g2.figure(figsize=(10, 5))
+g2.plot(common_frequency, summed_power, label="Summed Power Spectrum", color='purple')
+#g2.legend()
+#plt.show() #opens both?
+#g2.plot(common_frequency, summed_power, color='purple')
+g2.set_xlabel(labels[0])
+g2.set_ylabel(labels[1])
+g2.set_ylim([0, 0.25])
 median_eco = np.round(np.median(mfx_data['eco']))
-plt.title(f"Lomb-Scargle Power Spectrum on {labels[0]} (Pho N={median_eco})")
-plt.legend()
-plt.grid(True)
-plt.show() #opens both?
+g2.set_title(f"Lomb-Scargle Power Spectrum (Pho N={median_eco})")
+g2.grid(True)
+fig.tight_layout()
+
+canvas = tkagg.FigureCanvasTkAgg(fig, master=root)
+canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+canvas.draw()
+
+def export_raw_csv():
+    path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], title="Save Raw Signal Data")
+    if path:
+        np.savetxt(path, np.array(raw_data_points), delimiter=",", header=labels[0] + ", " + labels[1], comments='')
+        messagebox.showinfo("Export Successful", f"Raw signals saved to:\n{path}")
+
+def export_spectrum_csv():
+    path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], title="Save Power Spectrum Data")
+    if path:
+        data = np.column_stack((common_frequency, summed_power))
+        np.savetxt(path, data, delimiter=",", header=labels[0] + ", " + labels[1], comments='')
+        messagebox.showinfo("Export Successful", f"Power spectrum saved to:\n{path}")
+
+control_frame = tk.Frame(root)
+control_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+btn_raw = tk.Button(control_frame, text="Export Raw Signal", command=export_raw_csv, bg="lightgrey")
+btn_raw.pack(side=tk.LEFT, padx=5)
+
+btn_spec = tk.Button(control_frame, text="Export Power Spectrum", command=export_spectrum_csv, bg="lightgrey")
+btn_spec.pack(side=tk.LEFT, padx=5)
+
+# Add the navigation toolbar (zoom, pan, save) to the same window
+toolbar = tkagg.NavigationToolbar2Tk(canvas, root)
+toolbar.update()
+
+# Ensure clean exit when the window is closed: close the Matplotlib figure
+# and destroy the Tk root so the Python process can terminate. - used ai
+def on_closing():
+    try:
+        plt.close(fig)
+    except Exception:
+        pass
+    try:
+        root.quit()
+    except Exception:
+        pass
+    try:
+        root.destroy()
+    except Exception:
+        pass
+
+root.protocol("WM_DELETE_WINDOW", on_closing)
+
+root.mainloop()
